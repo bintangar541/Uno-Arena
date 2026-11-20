@@ -1,7 +1,25 @@
+
 import { io } from 'socket.io-client';
 
 const SESSION_KEY = 'uno-arena-guest-session';
-const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+
+const apiUrl = (
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.DEV ? 'http://localhost:3000' : '')
+).replace(/\/+$/, '');
+
+if (!apiUrl) {
+  console.error('VITE_API_URL belum dikonfigurasi!');
+}
+
+export const socket = io(apiUrl, {
+  autoConnect: false,
+  auth: {},
+  transports: ['websocket', 'polling'],
+  reconnection: true,
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1000,
+});
 
 function readSession() {
   try {
@@ -13,19 +31,17 @@ function readSession() {
   }
 }
 
-export const socket = io(apiUrl, {
-  autoConnect: false,
-  auth: {},
-});
-
 export function connectSocket() {
   const session = readSession();
+
   socket.auth = session?.reconnectToken
     ? { reconnectToken: session.reconnectToken }
     : {};
+
   if (!socket.connected) {
     socket.connect();
   }
+
   return socket;
 }
 
@@ -43,11 +59,14 @@ export function clearGuestSession() {
 
 export function requestSocketEvent(requestName, responseName, payload) {
   connectSocket();
+
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       socket.off(responseName, onSuccess);
       socket.off('error', onError);
-      reject(new Error('Server tidak merespons. Periksa koneksi lalu coba lagi.'));
+      reject(
+        new Error('Server tidak merespons. Periksa koneksi lalu coba lagi.')
+      );
     }, 10_000);
 
     function onSuccess(response) {
@@ -59,7 +78,11 @@ export function requestSocketEvent(requestName, responseName, payload) {
     function onError(error) {
       window.clearTimeout(timeout);
       socket.off(responseName, onSuccess);
-      const requestError = new Error(error?.message || 'Aksi tidak dapat diproses.');
+
+      const requestError = new Error(
+        error?.message || 'Aksi tidak dapat diproses.'
+      );
+
       requestError.code = error?.code;
       reject(requestError);
     }
