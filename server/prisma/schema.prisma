@@ -1,0 +1,105 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoomStatus {
+  WAITING
+  PLAYING
+  FINISHED
+}
+
+model User {
+  id              String        @id @default(uuid()) @db.Uuid
+  username        String        @unique @db.VarChar(24)
+  email           String        @unique @db.VarChar(254)
+  passwordHash    String        @map("password_hash")
+  avatarUrl       String?       @map("avatar_url")
+  totalMatches    Int           @default(0) @map("total_matches")
+  wins            Int           @default(0)
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  roomMemberships RoomPlayer[]
+  matchEntries    MatchPlayer[]
+
+  @@map("users")
+}
+
+model GameRoom {
+  id          String       @id @default(uuid()) @db.Uuid
+  code        String       @unique @db.VarChar(8)
+  status      RoomStatus   @default(WAITING)
+  customRules Json         @default("{}") @map("custom_rules")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+  players     RoomPlayer[]
+  matches     Match[]
+
+  @@map("game_rooms")
+}
+
+model RoomPlayer {
+  id        String   @id @default(uuid()) @db.Uuid
+  roomId    String   @map("room_id") @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  playerName String  @map("player_name") @db.VarChar(24)
+  isBot     Boolean  @default(false) @map("is_bot")
+  isReady   Boolean  @default(false) @map("is_ready")
+  position  Int
+  joinedAt  DateTime @default(now()) @map("joined_at")
+  room      GameRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([roomId, position])
+  @@index([userId])
+  @@map("room_players")
+}
+
+model Match {
+  id          String        @id @default(uuid()) @db.Uuid
+  roomId      String?       @map("room_id") @db.Uuid
+  winnerId    String?       @map("winner_id") @db.Uuid
+  startedAt   DateTime      @default(now()) @map("started_at")
+  finishedAt  DateTime?     @map("finished_at")
+  targetScore Int?          @map("target_score")
+  room        GameRoom?     @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  players     MatchPlayer[]
+  events      MatchEvent[]
+
+  @@index([startedAt])
+  @@map("matches")
+}
+
+model MatchPlayer {
+  id        String   @id @default(uuid()) @db.Uuid
+  matchId   String   @map("match_id") @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  playerName String  @map("player_name") @db.VarChar(24)
+  isBot     Boolean  @default(false) @map("is_bot")
+  score     Int      @default(0)
+  placement Int
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([matchId, placement])
+  @@index([userId])
+  @@map("match_players")
+}
+
+model MatchEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  matchId   String   @map("match_id") @db.Uuid
+  sequence  Int
+  type      String   @db.VarChar(40)
+  payload   Json
+  createdAt DateTime @default(now()) @map("created_at")
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, sequence])
+  @@index([matchId, createdAt])
+  @@map("match_events")
+}
