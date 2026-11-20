@@ -173,6 +173,7 @@ export default function LandingPage() {
       <footer className="landing-footer">
         <BrandLink />
         <p>UNO Arena · Main bareng, bukan sendirian.</p>
+        <p className="landing-footer-credit">Dibuat oleh Bintang Ardhian Pratama</p>
         <a href="#top">Ke atas ↑</a>
       </footer>
     </div>
