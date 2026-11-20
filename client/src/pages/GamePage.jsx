@@ -936,7 +936,7 @@ export default function GamePage() {
                 </div>
               </div>
               {selectedComboCardIds.length > 0 && (
-                <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+                <div className="combo-actions mt-2 flex flex-wrap items-center justify-center gap-2">
                   <p className="combo-note mr-1">
                     {selectedComboCardIds.length} kartu dipilih · angka sama atau +2/+4
                   </p>
