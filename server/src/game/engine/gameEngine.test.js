@@ -226,6 +226,34 @@ test('draws one card, restricts the play to that card, and allows passing', () =
   assert.equal(passed.drawnCardId, null);
 });
 
+test('allows drawn card to be combined with a matching-number card already in hand', () => {
+  const state = createGameFromDeck(
+    players,
+    [
+      number('p1-red-9', 'red', 9),
+      number('p2-blue-3', 'blue', 3),
+      number('p1-blue-2', 'blue', 2),
+      number('p2-yellow-4', 'yellow', 4),
+      number('start-yellow-5', 'yellow', 5),
+      number('draw-green-1', 'green', 1),
+      number('draw-yellow-9', 'yellow', 9),
+    ],
+    2,
+  );
+
+  // p1 draws a card: gets draw-yellow-9 (matches top card start-yellow-5)
+  const drawn = drawCard(state, 'p1', () => 0);
+  assert.equal(drawn.drawnCardId, 'draw-yellow-9');
+
+  // p1 plays both the drawn yellow-9 and their held red-9 as a combo
+  const played = playCards(drawn, 'p1', ['draw-yellow-9', 'p1-red-9']);
+  assert.equal(played.hands.p1.length, 1);
+  assert.equal(played.discardPile.at(-1).id, 'p1-red-9');
+  assert.equal(played.currentColor, 'red');
+  assert.equal(getCurrentPlayerId(played), 'p2');
+  assert.equal(played.drawnCardId, null);
+});
+
 test('reshuffles the discard pile while preserving its top card', () => {
   const state = twoPlayerGame(1);
   const topCard = state.discardPile[0];
@@ -458,6 +486,80 @@ test('combines Draw Two and Wild Draw Four into one stacked penalty', () => {
   assert.deepEqual(played.pendingFinishPlayerIds, []);
 });
 
+test('combines Wild card with a matching chosen color card', () => {
+  const threePlayers = [{ id: 'p1' }, { id: 'p2' }, { id: 'p3' }];
+  const state = createGameFromDeck(
+    threePlayers,
+    [
+      wild('p1-wild', 'wild'),
+      number('p2-red-3', 'red', 3),
+      number('p3-blue-2', 'blue', 2),
+      number('p1-blue-7', 'blue', 7),
+      number('p2-yellow-4', 'yellow', 4),
+      number('p3-green-5', 'green', 5),
+      number('p1-red-1', 'red', 1),
+      number('p2-green-6', 'green', 6),
+      number('p3-red-8', 'red', 8),
+      number('start-red-9', 'red', 9),
+    ],
+    3,
+  );
+
+  // p1 plays Wild + Blue-7, choosing blue as color
+  const played = playCards(
+    state,
+    'p1',
+    ['p1-wild', 'p1-blue-7'],
+    { colorChoice: 'blue' },
+  );
+
+  assert.equal(played.currentColor, 'blue');
+  assert.equal(played.discardPile.at(-1).id, 'p1-blue-7');
+  assert.equal(played.discardPile.at(-2).id, 'p1-wild');
+  assert.equal(played.hands.p1.length, 1);
+  assert.equal(getCurrentPlayerId(played), 'p2');
+});
+
+test('combines Wild Draw Four with a matching chosen color card and applies penalty', () => {
+  const threePlayers = [{ id: 'p1' }, { id: 'p2' }, { id: 'p3' }];
+  const state = createGameFromDeck(
+    threePlayers,
+    [
+      wild('p1-wild4', 'wild_draw_four'),
+      number('p2-red-3', 'red', 3),
+      number('p3-blue-2', 'blue', 2),
+      number('p1-green-5', 'green', 5),
+      number('p2-yellow-4', 'yellow', 4),
+      number('p3-green-1', 'green', 1),
+      number('p1-red-1', 'red', 1),
+      number('p2-green-6', 'green', 6),
+      number('p3-red-8', 'red', 8),
+      number('start-red-9', 'red', 9),
+      number('draw-1', 'blue', 1),
+      number('draw-2', 'blue', 2),
+      number('draw-3', 'blue', 3),
+      number('draw-4', 'blue', 4),
+    ],
+    3,
+    { stackingDrawCards: false },
+  );
+
+  // p1 plays Wild Draw Four + Green-5, choosing green
+  const played = playCards(
+    state,
+    'p1',
+    ['p1-wild4', 'p1-green-5'],
+    { colorChoice: 'green' },
+  );
+
+  assert.equal(played.currentColor, 'green');
+  assert.equal(played.discardPile.at(-1).id, 'p1-green-5');
+  assert.equal(played.discardPile.at(-2).id, 'p1-wild4');
+  assert.equal(played.hands.p1.length, 1);
+  assert.equal(played.hands.p2.length, 7); // 3 + 4 draw penalty
+  assert.equal(getCurrentPlayerId(played), 'p3'); // p2 was skipped by the draw penalty
+});
+
 test('a combined draw penalty is taken at once when stacking is disabled', () => {
   const state = createGameFromDeck(
     players,
@@ -599,7 +701,7 @@ test('continues through all placements and gives the last active player last pla
       number('start-red-9', 'red', 9),
     ],
     1,
-    { targetScore: 8 },
+    { targetScore: 6 },
   );
 
   const firstPlace = playCard(state, 'p1', 'p1-red-5');
@@ -614,7 +716,9 @@ test('continues through all placements and gives the last active player last pla
   assert.equal(finished.status, 'finished');
   assert.equal(finished.winnerId, 'p1');
   assert.equal(finished.matchWinnerId, 'p1');
-  assert.equal(finished.scoreboard.p1, 8);
+  // 70% of 8 = 6 for 1st place, 30% of 8 = 2 for 2nd place
+  assert.equal(finished.scoreboard.p1, 6);
+  assert.equal(finished.scoreboard.p2, 2);
   assert.deepEqual(finished.finishOrder, ['p1', 'p2', 'p3']);
   assert.equal(finished.hands.p3.length, 1);
 });
@@ -650,6 +754,11 @@ test('skips players already placed when advancing after a Reverse', () => {
   const finished = playCard(secondPlace, 'p3', 'p3-red-7');
   assert.deepEqual(finished.finishOrder, ['p1', 'p4', 'p3', 'p2']);
   assert.equal(finished.status, 'finished');
+  // 4-player score distribution: 60% (13) for 1st, 30% (6) for 2nd, 10% (2) for 3rd, 0 for 4th
+  assert.equal(finished.scoreboard.p1, 13);
+  assert.equal(finished.scoreboard.p4, 6);
+  assert.equal(finished.scoreboard.p3, 2);
+  assert.equal(finished.scoreboard.p2, 0);
 });
 
 test('a Skip advances past the next active player after its player finishes', () => {

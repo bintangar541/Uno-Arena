@@ -188,7 +188,31 @@ function rankPlayer(state, playerId) {
 
 function finishGame(state) {
   state.status = 'finished';
-  state.scoreboard[state.winnerId] += state.roundScore;
+  const totalScore = state.roundScore ?? 0;
+  const firstPlaceId = state.finishOrder[0] ?? state.winnerId;
+  const secondPlaceId = state.finishOrder[1];
+
+  // Score distribution based on player count:
+  // - 4 players: 1st gets 60%, 2nd gets 30%, 3rd gets 10%, 4th (last) gets 0%
+  // - 3 players: 1st gets 70%, 2nd gets 30%, 3rd (last) gets 0%
+  // - 2 players: 1st gets 100%, 2nd (last) gets 0%
+  const thirdPlaceId = state.finishOrder[2];
+  if (state.players.length === 4 && secondPlaceId && thirdPlaceId) {
+    const firstScore = Math.round(totalScore * 0.6);
+    const secondScore = Math.round(totalScore * 0.3);
+    const thirdScore = Math.max(0, totalScore - firstScore - secondScore);
+    state.scoreboard[firstPlaceId] = (state.scoreboard[firstPlaceId] ?? 0) + firstScore;
+    state.scoreboard[secondPlaceId] = (state.scoreboard[secondPlaceId] ?? 0) + secondScore;
+    state.scoreboard[thirdPlaceId] = (state.scoreboard[thirdPlaceId] ?? 0) + thirdScore;
+  } else if (state.players.length === 3 && secondPlaceId) {
+    const firstScore = Math.round(totalScore * 0.7);
+    const secondScore = Math.max(0, totalScore - firstScore);
+    state.scoreboard[firstPlaceId] = (state.scoreboard[firstPlaceId] ?? 0) + firstScore;
+    state.scoreboard[secondPlaceId] = (state.scoreboard[secondPlaceId] ?? 0) + secondScore;
+  } else if (state.winnerId) {
+    state.scoreboard[state.winnerId] = (state.scoreboard[state.winnerId] ?? 0) + totalScore;
+  }
+
   state.matchWinnerId = state.rules.targetScore > 0
     && state.scoreboard[state.winnerId] >= state.rules.targetScore
     ? state.winnerId
@@ -397,8 +421,18 @@ export function playCards(state, playerId, cardIds, options = {}, random = Math.
   const isDrawGroup = cards.every(
     (candidate) => candidate.type === 'draw2' || candidate.type === 'wild_draw_four',
   );
-  if (cardIds.length > 1 && !isNumberGroup && !isDrawGroup) {
-    ruleError('INVALID_CARD_COMBO', 'Only cards with the same number or draw cards can be combined.');
+  // A wild combo starts with one or more wild/wild_draw_four cards, followed by
+  // colored cards whose color matches the chosen colorChoice.  The leading wild
+  // card(s) set the color and the trailing colored cards ride along.
+  const chosenColor = options.colorChoice;
+  const leadingWildCount = cards.findIndex((c) => c.type !== 'wild' && c.type !== 'wild_draw_four');
+  const isWildCombo = cardIds.length > 1
+    && leadingWildCount > 0
+    && leadingWildCount < cards.length
+    && COLORS.includes(chosenColor)
+    && cards.slice(leadingWildCount).every((c) => c.color === chosenColor);
+  if (cardIds.length > 1 && !isNumberGroup && !isDrawGroup && !isWildCombo) {
+    ruleError('INVALID_CARD_COMBO', 'Only cards with the same number, draw cards, or a wild followed by matching-color cards can be combined.');
   }
 
   const playerIndex = getPlayerIndex(state, playerId);
@@ -428,9 +462,9 @@ export function playCards(state, playerId, cardIds, options = {}, random = Math.
   }
   if (
     state.drawnCardId
-    && (cardIds.length !== 1 || state.drawnCardId !== cardIds[0])
+    && !cardIds.includes(state.drawnCardId)
   ) {
-    ruleError('MUST_PLAY_DRAWN_CARD', 'Only the card drawn this turn may be played.');
+    ruleError('MUST_PLAY_DRAWN_CARD', 'The card drawn this turn must be played.');
   }
 
   const firstCardPlayable = isCardPlayable(state, playerId, card.id);
@@ -438,12 +472,13 @@ export function playCards(state, playerId, cardIds, options = {}, random = Math.
     ruleError('INVALID_MOVE', 'This card does not match the active color or top card.');
   }
 
-  const isWild = lastCard.type === 'wild' || lastCard.type === 'wild_draw_four';
-  const chosenColor = options.colorChoice;
-  if (isWild && !COLORS.includes(chosenColor)) {
+  const endsWithWild = lastCard.type === 'wild' || lastCard.type === 'wild_draw_four';
+  const needsColorChoice = endsWithWild || isWildCombo;
+  const chosenColor2 = options.colorChoice;
+  if (needsColorChoice && !COLORS.includes(chosenColor2)) {
     ruleError('COLOR_REQUIRED', 'Choose a color when playing a Wild card.');
   }
-  if (!isWild && chosenColor !== undefined) {
+  if (!needsColorChoice && chosenColor2 !== undefined) {
     ruleError('UNEXPECTED_COLOR', 'A color can only be chosen for a Wild card.');
   }
 
@@ -454,7 +489,7 @@ export function playCards(state, playerId, cardIds, options = {}, random = Math.
     (candidate) => !selectedCardIds.has(candidate.id),
   );
   next.discardPile.push(...cards);
-  next.currentColor = isWild ? chosenColor : lastCard.color;
+  next.currentColor = needsColorChoice ? chosenColor2 : lastCard.color;
   next.drawnCardId = null;
 
   const nextHand = next.hands[playerId];
@@ -538,6 +573,50 @@ export function playCards(state, playerId, cardIds, options = {}, random = Math.
         count: result.cards.length,
         cardId: lastCard.id,
       };
+    }
+  } else if (isWildCombo) {
+    // Wild combo: wild/+4 card(s) followed by colored cards.
+    const wildDrawFourCount = cards.filter((c) => c.type === 'wild_draw_four').length;
+    const drawTwoCount = cards.filter((c) => c.type === 'draw2').length;
+    const penalty = wildDrawFourCount * 4 + drawTwoCount * 2;
+    if (penalty > 0) {
+      if (next.rules.stackingDrawCards) {
+        next.pendingDraw += penalty;
+        const targetIndex = nextActiveIndex(next, playerIndex);
+        const targetId = next.players[targetIndex].id;
+        next.currentPlayerIndex = targetIndex;
+        next.lastAction = {
+          type: 'draw-penalty-pending',
+          playerId,
+          targetId,
+          count: next.pendingDraw,
+          cardId: lastCard.id,
+        };
+      } else {
+        const targetIndex = nextActiveIndex(next, playerIndex);
+        const targetId = next.players[targetIndex].id;
+        const result = drawFromPiles(next.drawPile, next.discardPile, penalty, random);
+        next.hands[targetId].push(...result.cards);
+        next.drawPile = result.drawPile;
+        next.discardPile = result.discardPile;
+        next.currentPlayerIndex = nextActiveIndex(next, targetIndex);
+        next.lastAction = {
+          type: 'draw-penalty',
+          playerId,
+          targetId,
+          count: result.cards.length,
+          cardId: lastCard.id,
+        };
+      }
+    } else if (lastCard.type === 'skip') {
+      next.currentPlayerIndex = nextActiveIndex(next, playerIndex, 2);
+    } else if (lastCard.type === 'reverse') {
+      next.direction *= -1;
+      next.currentPlayerIndex = activePlayerCount === 2 && nextHand.length > 0
+        ? playerIndex
+        : nextActiveIndex(next, playerIndex);
+    } else {
+      next.currentPlayerIndex = nextActiveIndex(next, playerIndex);
     }
   } else {
     next.currentPlayerIndex = nextActiveIndex(next, playerIndex);

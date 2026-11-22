@@ -54,13 +54,32 @@ function CardArtwork({ card, label }) {
   );
 }
 
-function canCombineCards(firstCard, candidate) {
+function canCombineCards(firstCard, candidate, currentlySelected = []) {
   if (firstCard.type === 'number') {
-    return candidate.type === 'number' && candidate.value === firstCard.value;
+    if (candidate.type === 'number' && candidate.value === firstCard.value) return true;
   }
   const firstIsDrawCard = firstCard.type === 'draw2' || firstCard.type === 'wild_draw_four';
   const candidateIsDrawCard = candidate.type === 'draw2' || candidate.type === 'wild_draw_four';
-  return firstIsDrawCard && candidateIsDrawCard;
+  if (firstIsDrawCard && candidateIsDrawCard) {
+    return true;
+  }
+  const firstIsWild = firstCard.type === 'wild' || firstCard.type === 'wild_draw_four';
+  const candidateIsWild = candidate.type === 'wild' || candidate.type === 'wild_draw_four';
+  if (firstIsWild && candidateIsWild) {
+    return true;
+  }
+  // Wild combo: Wild can combine with colored cards.
+  if (firstIsWild && candidate.color !== 'wild') {
+    const existingColored = currentlySelected.find((c) => c.color !== 'wild');
+    if (existingColored) {
+      return candidate.color === existingColored.color;
+    }
+    return true;
+  }
+  if (firstCard.color !== 'wild' && candidateIsWild) {
+    return true;
+  }
+  return false;
 }
 
 function prefersReducedMotion() {
@@ -190,6 +209,8 @@ export default function GamePage() {
   const [room, setRoom] = useState(null);
   const [error, setError] = useState('');
   const [selectedComboCardIds, setSelectedComboCardIds] = useState([]);
+  const [selectedColorForCombo, setSelectedColorForCombo] = useState(null);
+  const [extraCardIdsForCombo, setExtraCardIdsForCombo] = useState([]);
   const [lastEvent, setLastEvent] = useState('');
   const [timerDeadline, setTimerDeadline] = useState(null);
   const [now, setNow] = useState(Date.now());
@@ -678,9 +699,49 @@ export default function GamePage() {
     return () => window.clearInterval(interval);
   }, [timerDeadline, unoDeadline]);
 
+  useEffect(() => {
+    if (!game?.colorChoiceRequired) {
+      setSelectedColorForCombo(null);
+      setExtraCardIdsForCombo([]);
+    }
+  }, [game?.colorChoiceRequired]);
+
   function playSelectedCards(cardIds) {
     setError('');
-    socket.emit('game:play-card', { cardIds });
+    const selectedCards = cardIds
+      .map((id) => game?.hand.find((candidate) => candidate.id === id))
+      .filter(Boolean);
+    const hasWild = selectedCards.some((c) => c.type === 'wild' || c.type === 'wild_draw_four');
+    const coloredCards = selectedCards.filter((c) => c.color !== 'wild');
+
+    let orderedCardIds = [...cardIds];
+    if (hasWild && coloredCards.length > 0) {
+      // Reorder so wilds come first, followed by colored cards
+      const wilds = selectedCards.filter((c) => c.type === 'wild' || c.type === 'wild_draw_four');
+      orderedCardIds = [...wilds.map((c) => c.id), ...coloredCards.map((c) => c.id)];
+      socket.emit('game:play-card', {
+        cardIds: orderedCardIds,
+        colorChoice: coloredCards[0].color,
+      });
+      setSelectedComboCardIds([]);
+      return;
+    }
+
+    // Ensure the card that matches the discard pile top card comes first
+    const playableMatchingCard = selectedCards.find((c) => {
+      if (c.color === 'wild') return true;
+      if (c.color === game?.currentColor) return true;
+      if (c.type === game?.topCard?.type && c.value === game?.topCard?.value) return true;
+      return false;
+    });
+    if (playableMatchingCard && orderedCardIds[0] !== playableMatchingCard.id) {
+      orderedCardIds = [
+        playableMatchingCard.id,
+        ...orderedCardIds.filter((id) => id !== playableMatchingCard.id),
+      ];
+    }
+
+    socket.emit('game:play-card', { cardIds: orderedCardIds });
     setSelectedComboCardIds([]);
   }
 
@@ -688,11 +749,12 @@ export default function GamePage() {
     if (game?.colorChoiceRequired) {
       return;
     }
-    const firstSelectedCard = game.hand.find(
-      (candidate) => candidate.id === selectedComboCardIds[0],
-    );
+    const selectedCardsList = selectedComboCardIds
+      .map((id) => game?.hand.find((candidate) => candidate.id === id))
+      .filter(Boolean);
+    const firstSelectedCard = selectedCardsList[0];
     if (firstSelectedCard) {
-      if (!canCombineCards(firstSelectedCard, card)) {
+      if (!canCombineCards(firstSelectedCard, card, selectedCardsList)) {
         return;
       }
       setSelectedComboCardIds((current) => {
@@ -711,11 +773,9 @@ export default function GamePage() {
     if (!playableCards.has(card.id)) {
       return;
     }
-    const comboCardIds = game.drawnCardId
-      ? [card.id]
-      : game.hand
-        .filter((candidate) => canCombineCards(card, candidate))
-        .map((candidate) => candidate.id);
+    const comboCardIds = game.hand
+      .filter((candidate) => canCombineCards(card, candidate, [card]))
+      .map((candidate) => candidate.id);
     if (comboCardIds.length > 1) {
       setSelectedComboCardIds([card.id]);
       return;
@@ -727,11 +787,12 @@ export default function GamePage() {
     if (openingPhase || game?.colorChoiceRequired) {
       return false;
     }
-    const firstSelectedCard = game?.hand.find(
-      (candidate) => candidate.id === selectedComboCardIds[0],
-    );
+    const selectedCardsList = selectedComboCardIds
+      .map((id) => game?.hand.find((candidate) => candidate.id === id))
+      .filter(Boolean);
+    const firstSelectedCard = selectedCardsList[0];
     return firstSelectedCard
-      ? canCombineCards(firstSelectedCard, card)
+      ? canCombineCards(firstSelectedCard, card, selectedCardsList)
       : playableCards.has(card.id);
   }
 
@@ -758,8 +819,33 @@ export default function GamePage() {
   }
 
   function chooseColor(color) {
+    const matchingCards = game?.hand.filter((card) => card.color === color) ?? [];
+    if (matchingCards.length === 0) {
+      setError('');
+      socket.emit('game:choose-color', { color });
+      setSelectedColorForCombo(null);
+      setExtraCardIdsForCombo([]);
+      return;
+    }
+    setSelectedColorForCombo(color);
+    setExtraCardIdsForCombo([]);
+  }
+
+  function confirmColorCombo() {
     setError('');
-    socket.emit('game:choose-color', { color });
+    socket.emit('game:choose-color', {
+      color: selectedColorForCombo,
+      extraCardIds: extraCardIdsForCombo,
+    });
+    setSelectedColorForCombo(null);
+    setExtraCardIdsForCombo([]);
+  }
+
+  function skipExtraCardCombo() {
+    setError('');
+    socket.emit('game:choose-color', { color: selectedColorForCombo });
+    setSelectedColorForCombo(null);
+    setExtraCardIdsForCombo([]);
   }
 
   function startNextRound() {
@@ -1114,25 +1200,92 @@ export default function GamePage() {
       {game?.colorChoiceRequired && (
         <div className="color-choice-backdrop" role="dialog" aria-modal="true" aria-labelledby="color-title">
           <div className="color-choice-panel">
-            <p>WILD CARD</p>
-            <h2 id="color-title">Pilih warna berikutnya</h2>
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              {[
-                ['red', 'Merah', 'bg-[#ed4d48]'],
-                ['yellow', 'Kuning', 'bg-[#f0c943] text-[#342c15]'],
-                ['green', 'Hijau', 'bg-[#39a96b]'],
-                ['blue', 'Biru', 'bg-[#478de0]'],
-              ].map(([color, label, style]) => (
-                <button
-                  className={`color-choice-option min-h-12 rounded-xl font-bold text-white ${style}`}
-                  key={color}
-                  onClick={() => chooseColor(color)}
-                  type="button"
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            {!selectedColorForCombo ? (
+              <>
+                <p>WILD CARD</p>
+                <h2 id="color-title">Pilih warna berikutnya</h2>
+                <div className="mt-5 grid grid-cols-2 gap-3">
+                  {[
+                    ['red', 'Merah', 'bg-[#ed4d48]'],
+                    ['yellow', 'Kuning', 'bg-[#f0c943] text-[#342c15]'],
+                    ['green', 'Hijau', 'bg-[#39a96b]'],
+                    ['blue', 'Biru', 'bg-[#478de0]'],
+                  ].map(([color, label, style]) => (
+                    <button
+                      className={`color-choice-option min-h-12 rounded-xl font-bold text-white ${style}`}
+                      key={color}
+                      onClick={() => chooseColor(color)}
+                      type="button"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <p>WILD COMBO</p>
+                <h2 id="color-title" className="text-base font-semibold">
+                  Keluarkan kartu <span className="capitalize font-black text-[#d8f36a]">{selectedColorForCombo}</span> bersamanya?
+                </h2>
+                <p className="mt-1 text-xs text-white/70">
+                  Pilih kartu yang ingin dikeluarkan bersama Wild (opsional):
+                </p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2 max-h-48 overflow-y-auto p-2">
+                  {game?.hand
+                    ?.filter((card) => card.color === selectedColorForCombo)
+                    .map((card) => {
+                      const isSelected = extraCardIdsForCombo.includes(card.id);
+                      return (
+                        <button
+                          key={card.id}
+                          type="button"
+                          onClick={() => {
+                            setExtraCardIdsForCombo((current) =>
+                              current.includes(card.id)
+                                ? current.filter((id) => id !== card.id)
+                                : [...current, card.id]
+                            );
+                          }}
+                          className={`relative scale-90 transition transform ${
+                            isSelected ? 'ring-4 ring-[#d8f36a] scale-95' : 'opacity-80 hover:opacity-100'
+                          }`}
+                        >
+                          <CardArtwork card={card} label={card.type === 'number' ? card.value : cardLabels[card.type]} />
+                        </button>
+                      );
+                    })}
+                </div>
+                <div className="mt-5 flex flex-col gap-2">
+                  {extraCardIdsForCombo.length > 0 && (
+                    <button
+                      className="min-h-11 rounded-xl bg-[#d8f36a] px-4 font-bold text-[#1a1f20] hover:brightness-105"
+                      onClick={confirmColorCombo}
+                      type="button"
+                    >
+                      Keluarkan bersama ({extraCardIdsForCombo.length} kartu)
+                    </button>
+                  )}
+                  <button
+                    className="min-h-10 rounded-xl bg-white/10 px-4 font-semibold text-white/80 hover:bg-white/20"
+                    onClick={skipExtraCardCombo}
+                    type="button"
+                  >
+                    Hanya Wild (Tanpa kartu tambahan)
+                  </button>
+                  <button
+                    className="text-xs text-white/50 hover:text-white/80 mt-1"
+                    onClick={() => {
+                      setSelectedColorForCombo(null);
+                      setExtraCardIdsForCombo([]);
+                    }}
+                    type="button"
+                  >
+                    ← Ganti Pilihan Warna
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

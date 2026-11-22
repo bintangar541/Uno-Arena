@@ -59,10 +59,34 @@ export function projectGameState(room, playerId) {
   const activePlayerId = getCurrentPlayerId(state);
   const topCard = state.discardPile[state.discardPile.length - 1];
   const finishOrder = [...state.finishOrder];
+  const drawnCard = state.drawnCardId
+    ? state.hands[playerId]?.find((candidate) => candidate.id === state.drawnCardId)
+    : null;
+  const drawnCardIsPlayable = drawnCard
+    ? isCardPlayable(state, playerId, drawnCard.id)
+    : false;
+
   const playableCardIds = state.hands[playerId]
     .filter((card) => {
       if (activePlayerId === playerId) {
-        return !state.drawnCardId || state.drawnCardId === card.id;
+        if (!state.drawnCardId) {
+          return isCardPlayable(state, playerId, card.id);
+        }
+        if (!drawnCardIsPlayable) {
+          return false;
+        }
+        if (card.id === state.drawnCardId) {
+          return true;
+        }
+        // Allow cards that can combo with the drawn card (e.g. same number, draw stacking, wild)
+        const isSameNumber = card.type === 'number'
+          && drawnCard.type === 'number'
+          && card.value === drawnCard.value;
+        const isDrawCombo = (card.type === 'draw2' || card.type === 'wild_draw_four')
+          && (drawnCard.type === 'draw2' || drawnCard.type === 'wild_draw_four');
+        const isWildCombo = (drawnCard.type === 'wild' || drawnCard.type === 'wild_draw_four')
+          || (card.type === 'wild' || card.type === 'wild_draw_four');
+        return isSameNumber || isDrawCombo || isWildCombo;
       }
       return state.rules.jumpIn
         && state.pendingDraw === 0
@@ -72,8 +96,6 @@ export function projectGameState(room, playerId) {
         && card.type === topCard.type
         && card.value === topCard.value;
     })
-    .filter((card) => isCardPlayable(state, playerId, card.id)
-      || (activePlayerId !== playerId && state.rules.jumpIn))
     .map((card) => card.id);
 
   return {
@@ -690,13 +712,14 @@ export function registerGameSocket(io, existingManager) {
         throw new RoomError('CARD_NOT_IN_HAND', 'This card is not in your hand.');
       }
       const lastCard = cards[cards.length - 1];
-      if (isWild(lastCard) && payload.colorChoice === undefined) {
+      const hasWild = cards.some(isWild);
+      if (hasWild && payload.colorChoice === undefined) {
         playCards(state, player.id, cardIds, {
           colorChoice: 'red',
         });
         room.pendingColor = {
           playerId: player.id,
-          cardId: lastCard.id,
+          cardId: cards.find(isWild).id,
           cardIds: [...cardIds],
         };
         emitGameStates(room);
@@ -714,18 +737,30 @@ export function registerGameSocket(io, existingManager) {
       });
     });
 
-    handle(socket, 'game:choose-color', ['color'], ({ color }) => {
+    handle(socket, 'game:choose-color', ['color', 'extraCardIds'], ({ color, extraCardIds }) => {
       const { room, player } = requireGameMembership(socket);
       if (!room.pendingColor || room.pendingColor.playerId !== player.id) {
         throw new RoomError('COLOR_SELECTION_NOT_AVAILABLE', 'You do not have a pending color selection.');
       }
       const pendingCardIds = room.pendingColor.cardIds ?? [room.pendingColor.cardId];
+      // Allow appending extra colored cards that match the chosen color (wild combo).
+      let allCardIds = pendingCardIds;
+      if (Array.isArray(extraCardIds) && extraCardIds.length > 0) {
+        if (
+          extraCardIds.some((id) => typeof id !== 'string' || id.trim() === '')
+          || new Set(extraCardIds).size !== extraCardIds.length
+          || extraCardIds.some((id) => pendingCardIds.includes(id))
+        ) {
+          throw new RoomError('INVALID_PAYLOAD', 'Extra card ids must be distinct and not already pending.');
+        }
+        allCardIds = [...pendingCardIds, ...extraCardIds];
+      }
       const previousPlayerId = getCurrentPlayerId(room.gameState);
-      room.gameState = playCards(room.gameState, player.id, pendingCardIds, {
+      room.gameState = playCards(room.gameState, player.id, allCardIds, {
         colorChoice: color,
       });
       room.pendingColor = null;
-      publishCardPlay(room, previousPlayerId, player.id, pendingCardIds);
+      publishCardPlay(room, previousPlayerId, player.id, allCardIds);
       void runBotTurns(room).catch((error) => {
         reportBotFailure(room, error);
       });
