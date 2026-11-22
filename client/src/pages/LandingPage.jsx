@@ -87,9 +87,24 @@ function HeroCardScene() {
 }
 
 const howToPlay = [
-  ['01', 'Buat meja atau masuk pakai kode', 'Room privat, jadi kamu yang tentukan siapa ikut main.', '2-4 PEMAIN'],
-  ['02', 'Atur aturan sebelum mulai', 'Tentukan stacking, Jump-In, timer, dan aturan lain.', 'CUSTOM RULES'],
-  ['03', 'Main sampai kartu terakhir', 'Server mengatur giliran dan memvalidasi setiap kartu.', 'BOT 3 LEVEL'],
+  [
+    '01',
+    'Bikin room atau join pake kode',
+    'Buat meja privat khusus buat sirkel kamu, atau langsung masuk pake kode room dari temen.',
+    '2-4 PEMAIN',
+  ],
+  [
+    '02',
+    'Pasang rules favorit tongkrongan',
+    'Bebas aktifin Stacking (+2/+4 ditumpuk), Jump-In, batasan timer mikir, sampai target skor akhir.',
+    'CUSTOM RULES',
+  ],
+  [
+    '03',
+    'Adu taktik sampai kartu habis',
+    'Awas lupa teriak UNO pas sisa satu kartu! Kurang orang? Ada bot cerdas 3 level yang siap diajak tanding.',
+    'BOT 3 LEVEL',
+  ],
 ];
 
 export default function LandingPage() {
@@ -102,7 +117,7 @@ export default function LandingPage() {
             <a href="#how-to-play">Cara main</a>
           </nav>
           <Link className="landing-header-cta" to="/dashboard">
-            Masuk arena <span aria-hidden="true">↗</span>
+            Gas main <span aria-hidden="true">↗</span>
           </Link>
         </div>
       </header>
@@ -111,36 +126,36 @@ export default function LandingPage() {
         <section className="landing-hero">
           <HeroCardScene />
           <div className="hero-copy">
-            <p className="landing-eyebrow">UNO ONLINE <span>/</span> MAIN BARENG</p>
+            <p className="landing-eyebrow">UNO MULTIPLAYER <span>/</span> SERU BARENG</p>
             <h1>
-              Satu kartu.
+              Sisa satu kartu,
               <br />
-              <em>Semua panik.</em>
+              <em>malah kena +4.</em>
             </h1>
             <p className="hero-description">
-              Bikin meja privat, atur rules sesukamu, lalu ajak teman main
-              langsung dari browser. Nggak ada download, nggak perlu akun.
+              Bikin room privat, atur rules sesukamu, terus ajak temen mabar
+              langsung dari browser. Nggak perlu download, nggak ribet bikin akun.
             </p>
             <div className="hero-actions">
               <Link className="hero-primary-action" to="/dashboard">
-                Bikin meja <span aria-hidden="true">↗</span>
+                Bikin room <span aria-hidden="true">↗</span>
               </Link>
               <Link className="hero-secondary-action" to="/dashboard#join-room">
-                Punya kode room? Gabung
+                Punya kode room? Gabung di sini
               </Link>
             </div>
-            <p className="hero-facts">ROOM PRIVAT <i /> BOT 3 LEVEL <i /> CUSTOM RULES</p>
+            <p className="hero-facts">ROOM PRIVAT <i /> CUSTOM RULES <i /> BOT 3 LEVEL</p>
           </div>
           <a className="hero-scroll" href="#how-to-play">
             <span />
-            GULIR, LIHAT CARANYA
+            LIHAT CARA MAIN
           </a>
         </section>
 
         <section className="how-section" id="how-to-play">
           <div className="section-lead">
             <p className="section-kicker">CARA MAIN</p>
-            <h2>Mulai cepat.<br />Rusuhnya belakangan.</h2>
+            <h2>Gampang mulainya,<br />rusuh pas mainnya.</h2>
           </div>
           <ol className="how-list">
             {howToPlay.map(([number, title, detail, tag]) => (
@@ -160,11 +175,11 @@ export default function LandingPage() {
 
         <section className="landing-last-call">
           <div>
-            <p className="section-kicker">KODE ROOM SUDAH ADA?</p>
-            <h2>Ketemu di meja.</h2>
+            <p className="section-kicker">UDAH SIAP RUSUH BARENG?</p>
+            <h2>Ayo kumpul di meja.</h2>
           </div>
           <div className="last-call-actions">
-            <Link className="last-call-button" to="/dashboard">Buat room</Link>
+            <Link className="last-call-button" to="/dashboard">Buat room baru</Link>
             <Link className="last-call-link" to="/dashboard#join-room">Gabung pakai kode ↗</Link>
           </div>
         </section>
@@ -172,9 +187,9 @@ export default function LandingPage() {
 
       <footer className="landing-footer">
         <BrandLink />
-        <p>UNO Arena · Main bareng, bukan sendirian.</p>
+        <p>UNO Arena · Mabar game kartu seru langsung dari browser.</p>
         <p className="landing-footer-credit">Dibuat oleh Bintang Ardhian Pratama</p>
-        <a href="#top">Ke atas ↑</a>
+        <a href="#top">Kembali ke atas ↑</a>
       </footer>
     </div>
   );
