@@ -15,9 +15,26 @@ dotenv.config({ path: resolve(projectRoot, '.env') });
 const app = express();
 const httpServer = createServer(app);
 const port = Number(process.env.PORT) || 3000;
-const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
 
-app.use(cors({ origin: clientUrl }));
+function isOriginAllowed(origin) {
+  if (!origin) {
+    return true;
+  }
+  if (process.env.CLIENT_URL && origin === process.env.CLIENT_URL) {
+    return true;
+  }
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    return true;
+  }
+  return false;
+}
+
+app.use(cors({
+  origin: (origin, callback) => {
+    callback(null, isOriginAllowed(origin));
+  },
+  credentials: true,
+}));
 app.use(express.json());
 
 app.get('/api/health', (_request, response) => {
@@ -50,8 +67,11 @@ app.get('/api/health/db', async (_request, response) => {
 
 const io = new Server(httpServer, {
   cors: {
-    origin: clientUrl,
+    origin: (origin, callback) => {
+      callback(null, isOriginAllowed(origin));
+    },
     methods: ['GET', 'POST'],
+    credentials: true,
   },
 });
 

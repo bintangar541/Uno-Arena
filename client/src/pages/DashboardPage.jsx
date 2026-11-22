@@ -21,7 +21,7 @@ const apiUrl = (
   (import.meta.env.DEV ? 'http://localhost:3000' : '')
 ).replace(/\/+$/, '');
 const defaultRules = {
-  stackingDrawCards: false,
+  stackingDrawCards: true,
   jumpIn: false,
   drawUntilPlayable: false,
   forcePlay: false,

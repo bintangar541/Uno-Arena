@@ -195,6 +195,8 @@ export default function GamePage() {
   const [now, setNow] = useState(Date.now());
   const [playedCard, setPlayedCard] = useState(null);
   const [flyingCards, setFlyingCards] = useState([]);
+  const [openingPhase, setOpeningPhase] = useState(null);
+  const [isDealingHand, setIsDealingHand] = useState(false);
   const playerNames = useRef(new Map());
   const opponentElements = useRef(new Map());
   const handCardElements = useRef(new Map());
@@ -202,6 +204,8 @@ export default function GamePage() {
   const flightAnimations = useRef(new Map());
   const discardElement = useRef(null);
   const discardCardElement = useRef(null);
+  const drawPileElement = useRef(null);
+  const animatedRounds = useRef(new Set());
   const turnBadgeElement = useRef(null);
   const eventBannerElement = useRef(null);
   const animationCounter = useRef(0);
@@ -484,7 +488,7 @@ export default function GamePage() {
     }
     const previousIds = previousHandCardIds.current;
     const nextIds = new Set(hand.map((card) => card.id));
-    if (previousIds && !prefersReducedMotion()) {
+    if (previousIds && !prefersReducedMotion() && !openingPhase) {
       const newCards = hand
         .filter((card) => !previousIds.has(card.id))
         .map((card) => handCardElements.current.get(card.id))
@@ -506,7 +510,7 @@ export default function GamePage() {
       }
     }
     previousHandCardIds.current = nextIds;
-  }, [game?.hand]);
+  }, [game?.hand, openingPhase]);
 
   useEffect(() => {
     const card = discardCardElement.current;
@@ -557,6 +561,96 @@ export default function GamePage() {
       { y: 0, opacity: 1, duration: 0.22, ease: 'power2.out', overwrite: 'auto' },
     );
   }, [lastEvent]);
+
+  useEffect(() => {
+    if (!game || game.status !== 'playing' || prefersReducedMotion()) {
+      return undefined;
+    }
+    const roundKey = `${game.matchId ?? session?.roomCode}:${game.roundNumber}`;
+    if (animatedRounds.current.has(roundKey)) {
+      return undefined;
+    }
+
+    const isFreshRound = game.lastAction?.type === 'game-started' || previousHandCardIds.current === null;
+    if (!isFreshRound) {
+      animatedRounds.current.add(roundKey);
+      return undefined;
+    }
+
+    animatedRounds.current.add(roundKey);
+    setOpeningPhase('shuffling');
+
+    const dealTimer = window.setTimeout(() => {
+      setOpeningPhase('dealing');
+      setIsDealingHand(true);
+
+      opponents.forEach((opp, idx) => {
+        window.setTimeout(() => {
+          const el = opponentElements.current.get(opp.id);
+          if (el) {
+            el.classList.remove('opponent-card-count-pop');
+            void el.offsetWidth;
+            el.classList.add('opponent-card-count-pop');
+          }
+        }, 150 + idx * 110);
+      });
+
+      const handCards = (game.hand ?? [])
+        .map((card) => handCardElements.current.get(card.id))
+        .filter(Boolean);
+
+      if (handCards.length > 0) {
+        gsap.fromTo(
+          handCards,
+          {
+            y: 50,
+            scale: 0.7,
+            opacity: 0,
+          },
+          {
+            y: 0,
+            scale: 1,
+            opacity: 1,
+            duration: 0.55,
+            stagger: 0.07,
+            ease: 'back.out(1.2)',
+            clearProps: 'y,scale,opacity',
+            onComplete: () => {
+              setIsDealingHand(false);
+            },
+          },
+        );
+      } else {
+        setIsDealingHand(false);
+      }
+
+      const discardCard = discardCardElement.current;
+      if (discardCard) {
+        gsap.fromTo(
+          discardCard,
+          { scale: 0.55, rotation: -22, opacity: 0 },
+          {
+            scale: 1,
+            rotation: 0,
+            opacity: 1,
+            duration: 0.55,
+            delay: 0.22,
+            ease: 'back.out(1.6)',
+            clearProps: 'scale,rotation,opacity',
+          },
+        );
+      }
+
+      window.setTimeout(() => {
+        setOpeningPhase(null);
+        const activeName = playerNames.current.get(game.currentPlayerId) ?? (isMyTurn ? 'kamu' : 'Pemain');
+        setLastEvent(`Permainan dimulai! Giliran ${isMyTurn ? 'kamu' : activeName}.`);
+      }, 950);
+    }, 2200);
+
+    return () => window.clearTimeout(dealTimer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.status, game?.roundNumber, game?.matchId, session?.roomCode]);
 
   useEffect(() => () => {
     for (const animation of flightAnimations.current.values()) {
@@ -630,7 +724,7 @@ export default function GamePage() {
   }
 
   function isCardSelectable(card) {
-    if (game?.colorChoiceRequired) {
+    if (openingPhase || game?.colorChoiceRequired) {
       return false;
     }
     const firstSelectedCard = game?.hand.find(
@@ -693,7 +787,7 @@ export default function GamePage() {
       && !game.unoWindow.declared
       && game.unoWindow.deadlineAt > now,
   );
-  const canDraw = isMyTurn && !game?.drawnCardId && game?.status === 'playing';
+  const canDraw = isMyTurn && !game?.drawnCardId && game?.status === 'playing' && !openingPhase;
   const canPass = isMyTurn
     && Boolean(game?.drawnCardId)
     && !game?.playableCardIds.includes(game.drawnCardId);
@@ -771,9 +865,15 @@ export default function GamePage() {
         ) : (
           <>
             <section
-              className="arena-table mt-5 flex flex-1 flex-col justify-between p-4 sm:mt-7 sm:p-7"
+              className="arena-table relative mt-5 flex flex-1 flex-col justify-between p-4 sm:mt-7 sm:p-7"
               aria-label="Meja permainan UNO"
             >
+              {openingPhase && (
+                <div className="opening-deal-banner" aria-live="polite">
+                  <span className="opening-deal-pulse" />
+                  <span>{openingPhase === 'shuffling' ? 'Mengocok kartu...' : 'Membagikan kartu...'}</span>
+                </div>
+              )}
               <div className="game-table-topline">
                 <span>ARENA <b>{room?.code ?? 'PRIVATE TABLE'}</b></span>
                 <span>{game.players.length} PEMAIN <i /> CLASSIC RULES</span>
@@ -794,17 +894,26 @@ export default function GamePage() {
               <div className="game-play-zone my-6 flex flex-wrap items-center justify-center gap-7 sm:my-8 sm:gap-12">
                 <div className="table-mark" aria-hidden="true">UA</div>
                 <div className="flex flex-col items-center gap-2">
-                  <button
-                    aria-label="Ambil kartu"
-                    className={`draw-pile flex h-28 w-[4.25rem] items-center justify-center rounded-xl border-2 text-3xl font-black text-white transition sm:h-32 sm:w-[4.75rem] ${
-                      canDraw ? 'cursor-pointer hover:-translate-y-1 hover:border-[#d8f36a]' : 'cursor-not-allowed opacity-45'
-                    }`}
-                    disabled={!canDraw}
-                    onClick={drawCard}
-                    type="button"
-                  >
-                    <span>U</span>
-                  </button>
+                  <div className="relative">
+                    <button
+                      ref={drawPileElement}
+                      aria-label="Ambil kartu"
+                      className={`draw-pile flex h-28 w-[4.25rem] items-center justify-center rounded-xl border-2 text-3xl font-black text-white transition sm:h-32 sm:w-[4.75rem] ${
+                        canDraw ? 'cursor-pointer hover:-translate-y-1 hover:border-[#d8f36a]' : 'cursor-not-allowed opacity-45'
+                      }`}
+                      disabled={!canDraw}
+                      onClick={drawCard}
+                      type="button"
+                    >
+                      <span>U</span>
+                    </button>
+                    {openingPhase === 'shuffling' && (
+                      <div className="shuffle-deck-rig" aria-hidden="true">
+                        <div className="shuffle-stack shuffle-stack-left"><span>U</span></div>
+                        <div className="shuffle-stack shuffle-stack-right"><span>U</span></div>
+                      </div>
+                    )}
+                  </div>
                   <span className="pile-caption">
                     <b>{game.drawPileCount}</b> KARTU
                   </span>
@@ -913,7 +1022,7 @@ export default function GamePage() {
                 </div>
               </div>
               <div className="player-hand-scroll overflow-x-auto pb-3">
-                <div className="player-hand flex min-h-32 w-max min-w-full items-end justify-center gap-0 px-1 pt-3">
+                <div className={`player-hand flex min-h-32 w-max min-w-full items-end justify-center gap-0 px-1 pt-3 ${isDealingHand ? 'is-dealing' : ''}`}>
                   {game.hand.map((card, index) => (
                     <CardFace
                       card={card}

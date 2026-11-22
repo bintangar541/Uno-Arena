@@ -307,7 +307,9 @@ test('stacks draw cards and resolves the accumulated penalty when a player draws
   assert.equal(penaltyTaken.lastAction.count, 4);
 });
 
-test('finishes a round after a stacked penalty is finally taken', () => {
+test('finishes a round immediately when the last card is a draw card', () => {
+  // Per standard UNO rules: playing your last card wins the round instantly,
+  // even if it is a draw card. The opponent does not get to stack or draw.
   const state = createGameFromDeck(
     players,
     [
@@ -323,13 +325,11 @@ test('finishes a round after a stacked penalty is finally taken', () => {
     { stackingDrawCards: true },
   );
   const firstStack = playCard(state, 'p1', 'p1-red-draw2');
-  const finalStack = playCard(firstStack, 'p2', 'p2-blue-draw2');
-  const finished = drawCard(finalStack, 'p1', () => 0);
 
-  assert.equal(finalStack.pendingWinnerId, 'p1');
-  assert.equal(finished.status, 'finished');
-  assert.equal(finished.winnerId, 'p1');
-  assert.equal(finished.pendingDraw, 0);
+  // p1 played their last card — they win immediately.
+  assert.equal(firstStack.status, 'finished');
+  assert.equal(firstStack.winnerId, 'p1');
+  assert.equal(firstStack.pendingDraw, 0);
 });
 
 test('applies Wild Draw Four and chooses the active color', () => {
@@ -449,12 +449,13 @@ test('combines Draw Two and Wild Draw Four into one stacked penalty', () => {
     { colorChoice: 'green' },
   );
 
-  assert.equal(played.pendingDraw, 6);
-  assert.equal(getCurrentPlayerId(played), 'p2');
+  assert.equal(played.pendingDraw, 0);   // game ended, pendingDraw cleared
+  assert.equal(played.status, 'finished');
+  assert.equal(played.winnerId, 'p1');
   assert.equal(played.currentColor, 'green');
   assert.equal(played.discardPile.at(-2).id, 'p1-red-draw2');
   assert.equal(played.discardPile.at(-1).id, 'p1-wild4');
-  assert.equal(played.pendingFinishPlayerIds[0], 'p1');
+  assert.deepEqual(played.pendingFinishPlayerIds, []);
 });
 
 test('a combined draw penalty is taken at once when stacking is disabled', () => {
@@ -682,7 +683,7 @@ test('a Skip advances past the next active player after its player finishes', ()
   assert.equal(finished.status, 'finished');
 });
 
-test('ranks stacked-draw finishers in order after the penalty is taken', () => {
+test('ranks multi-player stacked-draw finishers who each play their last draw card', () => {
   const threePlayers = [
     { id: 'p1' },
     { id: 'p2' },
@@ -704,16 +705,19 @@ test('ranks stacked-draw finishers in order after the penalty is taken', () => {
     { stackingDrawCards: true },
   );
 
+  // p1 plays their last card (+2) → p1 is ranked 1st immediately.
+  // Game continues since p2 and p3 are still active.
   const firstStack = playCard(state, 'p1', 'p1-red-draw2');
-  const secondStack = playCard(firstStack, 'p2', 'p2-blue-draw2');
-  assert.deepEqual(secondStack.pendingFinishPlayerIds, ['p1', 'p2']);
-  assert.deepEqual(secondStack.finishOrder, []);
+  assert.deepEqual(firstStack.finishOrder, ['p1']);
+  assert.equal(firstStack.status, 'playing');
+  assert.equal(firstStack.pendingDraw, 2);
 
-  const finished = drawCard(secondStack, 'p3', () => 0);
-  assert.equal(finished.status, 'finished');
-  assert.deepEqual(finished.finishOrder, ['p1', 'p2', 'p3']);
-  assert.equal(finished.winnerId, 'p1');
-  assert.equal(finished.pendingWinnerId, null);
+  // p2 plays their last card (+2) stacking onto the pending draw → p2 ranked 2nd.
+  // Only p3 remains, so the round finishes immediately.
+  const secondStack = playCard(firstStack, 'p2', 'p2-blue-draw2');
+  assert.equal(secondStack.status, 'finished');
+  assert.deepEqual(secondStack.finishOrder, ['p1', 'p2', 'p3']);
+  assert.equal(secondStack.winnerId, 'p1');
 });
 
 test('detects a winner and calculates round score from opponents’ hands', () => {

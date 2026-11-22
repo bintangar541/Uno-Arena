@@ -110,7 +110,10 @@ export function createRoomManager({
 
   function createRoom(socketId, { name, rules = {} } = {}) {
     ensureSocketFree(socketId);
-    const normalizedRules = normalizeCustomRules(rules);
+    const normalizedRules = normalizeCustomRules({
+      stackingDrawCards: true,
+      ...rules,
+    });
     const normalizedName = normalizeName(name);
     let code;
     for (let attempt = 0; attempt < 10; attempt += 1) {

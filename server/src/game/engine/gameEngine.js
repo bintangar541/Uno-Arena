@@ -95,10 +95,29 @@ function getActivePlayerIds(state) {
 
 function nextActiveIndex(state, fromIndex = state.currentPlayerIndex, steps = 1) {
   const count = state.players.length;
+
+  // First pass: prefer players with cards in hand (strict active).
   let index = fromIndex;
   let activeSteps = 0;
   let attempts = 0;
+  while (activeSteps < steps && attempts < count * steps) {
+    index = (index + state.direction + count) % count;
+    attempts += 1;
+    const playerId = state.players[index].id;
+    if (
+      !state.finishOrder.includes(playerId)
+      && state.hands[playerId]?.length > 0
+    ) {
+      activeSteps += 1;
+    }
+  }
+  if (activeSteps === steps) return index;
 
+  // Fallback: when no player with cards exists, include pendingFinishPlayerIds
+  // so that a player who finished on a draw card can still receive their draw.
+  index = fromIndex;
+  activeSteps = 0;
+  attempts = 0;
   while (activeSteps < steps && attempts < count * steps) {
     index = (index + state.direction + count) % count;
     attempts += 1;
@@ -107,16 +126,12 @@ function nextActiveIndex(state, fromIndex = state.currentPlayerIndex, steps = 1)
       !state.finishOrder.includes(playerId)
       && (
         state.hands[playerId]?.length > 0
-        || (
-          state.pendingDraw > 0
-          && state.pendingFinishPlayerIds.includes(playerId)
-        )
+        || (state.pendingDraw > 0 && state.pendingFinishPlayerIds.includes(playerId))
       )
     ) {
       activeSteps += 1;
     }
   }
-
   return activeSteps === steps ? index : fromIndex;
 }
 
@@ -471,14 +486,43 @@ export function playCards(state, playerId, cardIds, options = {}, random = Math.
     );
     if (next.rules.stackingDrawCards) {
       next.pendingDraw += penalty;
-      next.currentPlayerIndex = nextActiveIndex(next, playerIndex);
-      next.lastAction = {
-        type: 'draw-penalty-pending',
-        playerId,
-        targetId: next.players[next.currentPlayerIndex].id,
-        count: next.pendingDraw,
-        cardId: lastCard.id,
-      };
+      const targetIndex = nextActiveIndex(next, playerIndex);
+      const targetId = next.players[targetIndex].id;
+      // If the next player found is in pendingFinishPlayerIds (0 cards, finished on a draw),
+      // AND the current player still has cards (meaning they tried to stack onto a finished
+      // player with no one else to pass to), force the current player to take the penalty.
+      const targetIsFinishing = next.pendingFinishPlayerIds.includes(targetId);
+      if (targetIsFinishing && nextHand.length > 0) {
+        // Current player still has cards but tried to stack onto a finished player.
+        // No valid stacking target — force the current player to draw immediately.
+        const result = drawFromPiles(next.drawPile, next.discardPile, next.pendingDraw, random);
+        next.hands[playerId].push(...result.cards);
+        next.drawPile = result.drawPile;
+        next.discardPile = result.discardPile;
+        next.pendingDraw = 0;
+        next.lastAction = {
+          type: 'draw-penalty',
+          playerId,
+          targetId: playerId,
+          count: result.cards.length,
+          cardId: lastCard.id,
+        };
+        // Resolve pending finishers FIRST (e.g. bot that played last draw card),
+        // then advance turn only if the game is still ongoing.
+        resolvePendingFinishers(next);
+        if (next.status === 'playing') {
+          next.currentPlayerIndex = nextActiveIndex(next, playerIndex);
+        }
+      } else {
+        next.currentPlayerIndex = targetIndex;
+        next.lastAction = {
+          type: 'draw-penalty-pending',
+          playerId,
+          targetId,
+          count: next.pendingDraw,
+          cardId: lastCard.id,
+        };
+      }
     } else {
       const targetIndex = nextActiveIndex(next, playerIndex);
       const targetId = next.players[targetIndex].id;
@@ -500,11 +544,10 @@ export function playCards(state, playerId, cardIds, options = {}, random = Math.
   }
 
   if (nextHand.length === 0) {
-    if (next.pendingDraw > 0) {
-      queueFinisher(next, playerId);
-    } else {
-      rankPlayer(next, playerId);
-    }
+    // A player who plays their last card wins immediately, regardless of card type.
+    // If it was a draw card, pendingDraw is already set for the next player but
+    // finishGame will clear it — the opponent does not draw when the round ends.
+    rankPlayer(next, playerId);
     finishRoundIfReady(next);
   }
 
