@@ -1,3 +1,4 @@
+
 import dotenv from 'dotenv';
 import cors from 'cors';
 import express from 'express';
@@ -6,6 +7,7 @@ import { dirname, resolve } from 'node:path';
 import { Server } from 'socket.io';
 import { fileURLToPath } from 'node:url';
 import { registerGameSocket } from './socket/gameSocket.js';
+import { prisma } from './lib/prisma.js';
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 dotenv.config({ path: resolve(projectRoot, '.env') });
@@ -26,6 +28,26 @@ app.get('/api/health', (_request, response) => {
   });
 });
 
+app.get('/api/health/db', async (_request, response) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+
+    response.json({
+      status: 'ok',
+      database: 'connected',
+      provider: 'neon-postgresql',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Database health check failed:', error);
+
+    response.status(503).json({
+      status: 'error',
+      database: 'disconnected',
+    });
+  }
+});
+
 const io = new Server(httpServer, {
   cors: {
     origin: clientUrl,
@@ -38,3 +60,17 @@ registerGameSocket(io);
 httpServer.listen(port, () => {
   console.log(`UNO Arena server listening on http://localhost:${port}`);
 });
+
+async function shutdown() {
+  console.log('Shutting down UNO Arena server...');
+
+  await new Promise((resolveClose) => {
+    httpServer.close(resolveClose);
+  });
+
+  await prisma.$disconnect();
+  process.exit(0);
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
