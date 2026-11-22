@@ -16,7 +16,10 @@ import {
 } from '../storage/guestMatchHistory.js';
 import './DashboardPage.css';
 
-const apiUrl = import.meta.env.VITE_API_URL || 'const API_URL = import.meta.env.VITE_API_URL;';
+const apiUrl = (
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.DEV ? 'http://localhost:3000' : '')
+).replace(/\/+$/, '');
 const defaultRules = {
   stackingDrawCards: false,
   jumpIn: false,
